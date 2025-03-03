@@ -1085,4 +1085,34 @@ mod test {
         assert_eq!(address_txs_blocking, address_txs_async);
         assert_eq!(address_txs_async[0].txid, txid);
     }
+
+    #[cfg(all(feature = "blocking", feature = "async", feature="blocking-https", feature="async-https"))]
+    #[tokio::test]
+    async fn test_get_block_txids() {
+        use std::str::FromStr;
+        
+        let builder = Builder::new("https://blockstream.info/testnet/api");
+        let async_client = builder.clone().build_async().unwrap();
+        let blocking_client = builder.build_blocking();
+        let result_blocking = blocking_client
+            .get_block_txids(
+                BlockHash::from_str(
+                    "00000000000001739663ce45f89e24081a3343b919184be953cf9402b2b11daa",
+                )
+                .expect("Couldn't parse blockhash"),
+            )
+            .await
+            .unwrap();
+        let result_async = async_client
+            .get_block_txids(
+                BlockHash::from_str(
+                    "00000000000001739663ce45f89e24081a3343b919184be953cf9402b2b11daa",
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result_blocking, result_async);
+        println!("{:?}", result_async);
+    }
 }

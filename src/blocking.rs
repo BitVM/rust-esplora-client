@@ -397,7 +397,11 @@ impl BlockingClient {
 
     /// Get the list of unspent transaction outputs associated with the address.
     pub async fn get_address_utxo(&self, address: Address) -> Result<Vec<Utxo>, Error> {
-        self.get_response_json(&format!("address/{}/utxo", address))
+        self.get_response_json(&format!("/address/{}/utxo", address))
+    }
+    /// Get the list of txids for the block hash
+    pub async fn get_block_txids(&self, block_hash: BlockHash) -> Result<Vec<Txid>, Error> {
+        self.get_response_json(&format!("/block/{}/txids", block_hash))
     }
 }
 

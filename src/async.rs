@@ -475,6 +475,15 @@ impl<S: Sleeper> AsyncClient<S> {
         }
     }
 
+    /// Get the list of block hashes associated with the block's txids.
+    pub async fn get_block_txids(&self, block_hash: BlockHash) -> Result<Vec<Txid>, Error> {
+        let txids: Vec<Txid> = self.get_response_json(&format!("/block/{block_hash}/txids")).await?;
+        if txids.is_empty() {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(txids)
+    }
+
     /// Get the underlying base URL.
     pub fn url(&self) -> &str {
         &self.url
