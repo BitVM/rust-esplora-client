@@ -295,6 +295,79 @@ impl BlockingClient {
         }
     }
 
+    /// Broadcast a package of [`Transaction`]s to Esplora.
+    ///
+    /// This makes a POST request to the `/txs/package` endpoint, sending a JSON
+    /// array where every element is the hex-encoded serialized transaction. If
+    /// the server replies with a JSON body containing a `package_msg` field
+    /// different than `"success"`, the function will return an
+    /// [`Error::HttpResponse`] detailing the failures.
+    pub fn broadcast_package(&self, txs: &[Transaction]) -> Result<(), Error> {
+        use serde::Deserialize;
+        use std::collections::HashMap;
+
+        #[derive(Debug, Deserialize)]
+        struct PackageTxInfo {
+            txid: Txid,
+            error: Option<String>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct SubmitPackageResponse {
+            #[serde(rename = "tx-results")]
+            tx_results: HashMap<String, PackageTxInfo>,
+            package_msg: String,
+        }
+
+        // Prepare request body as JSON array of hex strings.
+        let hexes: Vec<String> = txs
+            .iter()
+            .map(|tx| serialize(tx).to_lower_hex_string())
+            .collect();
+
+        let mut request = minreq::post(format!("{}/txs/package", self.url))
+            .with_json(&hexes)
+            .map_err(|_| Error::InvalidResponse)?;
+
+        if let Some(proxy) = &self.proxy {
+            let proxy = Proxy::new(proxy.as_str())?;
+            request = request.with_proxy(proxy);
+        }
+
+        if let Some(timeout) = &self.timeout {
+            request = request.with_timeout(*timeout);
+        }
+
+        match request.send() {
+            Ok(resp) if !is_status_ok(resp.status_code) => {
+                let status = u16::try_from(resp.status_code).map_err(Error::StatusCode)?;
+                let message = resp.as_str().unwrap_or_default().to_string();
+                Err(Error::HttpResponse { status, message })
+            }
+            Ok(resp) => {
+                // Attempt to parse JSON response to check package status.
+                if let Ok(parsed) = resp.json::<SubmitPackageResponse>() {
+                    if parsed.package_msg != "success" {
+                        let details = parsed
+                            .tx_results
+                            .values()
+                            .filter_map(|info| {
+                                info.error.as_ref().map(|e| format!("tx {}: {}", info.txid, e))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Err(Error::HttpResponse {
+                            status: 200,
+                            message: format!("package relay failed: {}", details),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(Error::Minreq(e)),
+        }
+    }
+
     /// Get the height of the current blockchain tip.
     pub fn get_height(&self) -> Result<u32, Error> {
         self.get_response_str("/blocks/tip/height")

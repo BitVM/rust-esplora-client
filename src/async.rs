@@ -363,6 +363,76 @@ impl<S: Sleeper> AsyncClient<S> {
         self.post_request_hex("/tx", transaction).await
     }
 
+    /// Broadcast a package of [`Transaction`]s to Esplora.
+    ///
+    /// This makes a POST request to the `/txs/package` endpoint, sending a JSON
+    /// array where every element is the hex-encoded serialized transaction. If
+    /// the server replies with a JSON body containing a `package_msg` field
+    /// different than `"success"`, the function will return an
+    /// [`Error::HttpResponse`] detailing the failures.
+    pub async fn broadcast_package(&self, txs: &[Transaction]) -> Result<(), Error> {
+        use serde::Deserialize;
+        use std::collections::HashMap;
+
+        #[derive(Debug, Deserialize)]
+        struct PackageTxInfo {
+            txid: Txid,
+            error: Option<String>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct SubmitPackageResponse {
+            #[serde(rename = "tx-results")]
+            tx_results: HashMap<String, PackageTxInfo>,
+            package_msg: String,
+        }
+
+        let url = format!("{}/txs/package", self.url);
+        let hexes: Vec<String> = txs
+            .iter()
+            .map(|tx| serialize(tx).to_lower_hex_string())
+            .collect();
+
+        let response = self.client.post(url).json(&hexes).send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(Error::HttpResponse {
+                status: status.as_u16(),
+                message: response.text().await.unwrap_or_default(),
+            });
+        }
+
+        // Try to parse JSON response to verify package acceptance.
+        match response.json::<SubmitPackageResponse>().await {
+            Ok(res) => {
+                if res.package_msg != "success" {
+                    // Collect individual tx errors for context.
+                    let details = res
+                        .tx_results
+                        .values()
+                        .filter_map(|info| {
+                            info.error.as_ref().map(|e| {
+                                format!("tx {}: {}", info.txid, e)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    return Err(Error::HttpResponse {
+                        status: status.as_u16(),
+                        message: format!("package relay failed: {}", details),
+                    });
+                }
+                Ok(())
+            }
+            Err(_) => {
+                // If body is not JSON we simply assume success (server returned 200)
+                Ok(())
+            }
+        }
+    }
+
     /// Get the current height of the blockchain tip
     pub async fn get_height(&self) -> Result<u32, Error> {
         self.get_response_text("/blocks/tip/height")
